@@ -36,4 +36,8 @@ sketch
 .history
 .ionide
 
+#ignore heavy build
+public/UnityBuild/
+
+
 # End of https://www.toptal.com/developers/gitignore/api/react,visualstudiocode
