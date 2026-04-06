@@ -9,7 +9,7 @@ public class VercelPulse : MonoBehaviour {
     private string apiUpdateUrl = "https://fortinero-vercel.vercel.app/api/session";
     private GameState playerGameState;
     [SerializeField] private ThirdPersonController _playerController;
-    public const float STEPS_PER_SYNC = 10;
+    public const float STEPS_PER_SYNC = 5;
     
     private List<PlayerAction> _pendingActions = new List<PlayerAction>();
 
@@ -26,11 +26,11 @@ public class VercelPulse : MonoBehaviour {
     {
         
     }
-    PlayerAction _lastRecordedAction = new();
+    PlayerAction _lastRecordedAction = null;
 
     void RecordAction(string type) {
         
-        if (type == _lastRecordedAction.type &&  Time.time - _lastRecordedAction.timestamp < 1f/STEPS_PER_SYNC)
+        if (_lastRecordedAction != null && type == _lastRecordedAction.type &&  Time.time - _lastRecordedAction.Timestamp < 1f/STEPS_PER_SYNC)
             return;
         PlayerAction item = new(transform.position, _playerController.transform.eulerAngles.y, Time.time, type);
         _lastRecordedAction = item;

@@ -1,27 +1,23 @@
 using UnityEngine;
 using System.Collections.Generic;
-using System.Linq;
-using System;
 
 public class GhostController : MonoBehaviour
 {
+    [Header("Pacing Settings")]
+    [SerializeField] private float _speedChangeRate = 10.0f;
+    [SerializeField] private float _rotationSpeed = 15.0f;
+    [SerializeField] private float _interpolationDelay = 0.1f;
+
     private Animator _animator;
     private int _animIDSpeed, _animIDGrounded, _animIDJump, _animIDFreeFall, _animIDMotionSpeed;
 
-    public float SyncWindow => WorldSyncManager.SYNC_INTERVAL; 
-
-    private float _lerpTime;
-    private bool _hasStarted = false;
-
-    [Header("Local Physics")]
-    public float Gravity = -15.0f;
-    private float _verticalVelocity;
-    private Vector3 _currentPhysicsPos;
-
-    [Header("Pacing Settings")]
-    public float SpeedDamping = 5f;
-    public float StopThreshold = 0.05f;
-    private float _currentAnimSpeed;
+    private Queue<PlayerAction> _actionBuffer = new Queue<PlayerAction>();
+    private float _playbackClock; 
+    private bool _isPlaybackStarted = false;
+    private PlayerAction _targetAction;
+     private PlayerAction _previousAction;
+    private float _lastBufferedTimestamp;
+    private float _currentAnimBlend;
 
     void Awake()
     {
@@ -31,94 +27,128 @@ public class GhostController : MonoBehaviour
         _animIDJump = Animator.StringToHash("Jump");
         _animIDFreeFall = Animator.StringToHash("FreeFall");
         _animIDMotionSpeed = Animator.StringToHash("MotionSpeed");
-        
     }
-    private List<Vector3> _pathPoints = new List<Vector3>();
-    private PlayerData _oldData = new PlayerData();
+
     public void UpdateFromNetwork(PlayerData data)
     {
-        if (data.recentActions == null || data.recentActions.Count == 0 || data.Equals(_oldData)) return;
-        _oldData = data;
+        if (data.recentActions == null || data.recentActions.Count == 0) return;
 
-        TaskRunner.Instance.Cancel(data.playerId);
-        float packetStartTime = data.recentActions[0].timestamp;
-
-        for (int i = 0; i < data.recentActions.Count; i++)
+        foreach (var action in data.recentActions)
         {
-            PlayerAction action = data.recentActions[i];
-            PlayerAction prevAction = data.recentActions[Mathf.Max(0, i - 1)];
 
-            float relativeDelay = action.timestamp - packetStartTime;
-            float prevDelay = prevAction.timestamp - packetStartTime;
-            float safeDelay = Mathf.Max(0, relativeDelay);
-
-            //Move and rotation, avery action counts.
-            TaskRunner.Instance.Delay(prevDelay, () =>
-            {   
-                TaskRunner.Instance.Cancel($"Move:{data.playerId}");
-                TaskRunner.Instance.Move(transform,action.Position,Quaternion.Euler(0,-action.RotationY,0), relativeDelay-prevDelay, $"Move:{data.playerId}");
-                
-            },data.playerId);
-
-            TaskRunner.Instance.Delay(relativeDelay, () =>
-            {
-                UpdateMoveAnimation(action);
-                switch (action.type)
-                {   
-                    case PlayerData.JUMP_EVENT: JumpEvent(); break;
-                    case PlayerData.FALL_EVENT: FallEvent(); break;
-                    case PlayerData.GROUNDED_EVENT: GroundedEvent(); break;
+            if (!_isPlaybackStarted)
+                {
+                    // Start the clock slightly behind the first timestamp to create the buffer
+                    _playbackClock = action.Timestamp;
+                    _isPlaybackStarted = true;
                 }
-            }, data.playerId);
+
+            if (_actionBuffer.Count == 0 || action.Timestamp > _lastBufferedTimestamp)
+            {
+                _actionBuffer.Enqueue(action);
+                _lastBufferedTimestamp = action.Timestamp;
+            }
         }
     }
 
-    private Vector3 _lastActionPos;
-    private float _lastActionTime;
+    private void Update()
+    {
+        if (!_isPlaybackStarted) return;
+        if (_actionBuffer.Count == 0) return;
+        _playbackClock += Time.deltaTime;
+        ProcessBuffer();
+        ApplyMovement();
+    }
 
-   private float _currentAnimBlend; // Persistent variable to store the lerped value
-    private const float SpeedChangeRate = 10.0f; // Matches the Move() logic rate
+   
 
-private void UpdateMoveAnimation(PlayerAction action)
+private void ProcessBuffer()
 {
-    float timeDelta = action.timestamp - _lastActionTime;
-    if (timeDelta <= 0) return;
+    if (_actionBuffer.Count == 0) return;
 
-    float distance = Vector3.Distance(_lastActionPos, action.Position);
-    float physicalSpeed = distance / timeDelta;
+    // If we don't have a target, or we've passed the current target's timestamp
+    if (_targetAction == null || _playbackClock >= _targetAction.Timestamp)
+    {
+        if (_actionBuffer.Count > 0)
+        {
+            // The old target becomes the new starting point
+            _previousAction = _targetAction; 
+            _targetAction = _actionBuffer.Dequeue();
 
-    _currentAnimBlend = Mathf.Lerp(_currentAnimBlend, physicalSpeed, timeDelta * SpeedChangeRate);
-
-    if (_currentAnimBlend < 0.01f) _currentAnimBlend = 0f;
-    float inferredInputMagnitude = physicalSpeed > 0.1f ? 1f : 0f;
-    _lastActionPos = action.Position;
-    _lastActionTime = action.timestamp;
+            // If this is the first move, bridge the gap from current position
+            if (_previousAction == null)
+            {
+                _previousAction = _targetAction;
+            }
+            
+            ExecuteEvents(_previousAction);
+        }
+    }
 }
 
-    private void GroundedEvent()
+private void ApplyMovement()
+{
+    if (_previousAction == null || _targetAction == null) return;
+
+    // 1. Calculate the "Alpha" (0 to 1) of the current move segment
+    float segmentDuration = _targetAction.Timestamp - _previousAction.Timestamp;
+    float timePassedInSegment = _playbackClock - _previousAction.Timestamp;
+    
+    // t is the percentage of completion for this specific movement jump
+    float t = segmentDuration > 0 ? timePassedInSegment / segmentDuration : 1f;
+    t = Mathf.Clamp01(t);
+
+    // 2. Linear Interpolation (Lerp) for position and rotation
+    // This ensures a constant velocity between the two points
+    Vector3 newPos = Vector3.Lerp(_previousAction.Position, _targetAction.Position, t);
+    float newRot = Mathf.LerpAngle(_previousAction.RotationY, _targetAction.RotationY, t);
+
+    // 3. Calculate actual velocity for the Animator
+    // Speed = Distance of this segment / Time of this segment
+    float segmentSpeed = Vector3.Distance(_previousAction.Position, _targetAction.Position) / Mathf.Max(0.001f, segmentDuration);
+    
+    // Apply
+    transform.position = newPos;
+    transform.rotation = Quaternion.Euler(0, newRot, 0);
+
+    UpdateMoveAnimation(segmentSpeed, t);
+}
+
+private void UpdateMoveAnimation(float speed, float t)
+{
+    // If we are at the end of a segment and no more data is in buffer, fade to 0
+    float targetAnimSpeed = (_actionBuffer.Count == 0 && t >= 1.1f) ? 0f : speed;
+
+    _currentAnimBlend = Mathf.Lerp(_currentAnimBlend, targetAnimSpeed, Time.deltaTime * _speedChangeRate);
+    if (_currentAnimBlend < 0.01f) _currentAnimBlend = 0f;
+
+    _animator.SetFloat(_animIDSpeed, _currentAnimBlend);
+    _animator.SetFloat(_animIDMotionSpeed, targetAnimSpeed > 0.1f ? 1f : 0f);
+}
+
+    private void ExecuteEvents(PlayerAction action)
     {
-        _animator.SetBool(_animIDGrounded,true);
-        _animator.SetBool(_animIDJump, false);
-        _animator.SetBool(_animIDFreeFall, false);
+        switch (action.type)
+        {
+            case PlayerData.JUMP_EVENT:
+                _animator.SetBool(_animIDGrounded, false);
+                _animator.SetBool(_animIDJump, true);
+                break;
+            case PlayerData.FALL_EVENT:
+                _animator.SetBool(_animIDGrounded, false);
+                _animator.SetBool(_animIDFreeFall, true);
+                break;
+            case PlayerData.GROUNDED_EVENT:
+                _animator.SetBool(_animIDGrounded, true);
+                _animator.SetBool(_animIDJump, false);
+                _animator.SetBool(_animIDFreeFall, false);
+                break;
+        }
     }
-
-
-    private void JumpEvent()
-    {
-        _animator.SetBool(_animIDGrounded,false);
-        _animator.SetBool(_animIDJump,true);
-    }
-
-    private void FallEvent()
-    {
-        _animator.SetBool(_animIDGrounded,false);
-        _animator.SetBool(_animIDFreeFall,true);
-    }
-
 
     public AudioClip LandingAudioClip;
-        public AudioClip[] FootstepAudioClips;
-        [Range(0, 1)] public float FootstepAudioVolume = 0.5f;
+    public AudioClip[] FootstepAudioClips;
+    [Range(0, 1)] public float FootstepAudioVolume = 0.5f;
 
     private void OnFootstep(AnimationEvent animationEvent)
     {
@@ -139,4 +169,30 @@ private void UpdateMoveAnimation(PlayerAction action)
             AudioSource.PlayClipAtPoint(LandingAudioClip, transform.TransformPoint(transform.position), FootstepAudioVolume);
         }
     }
+
+    private void OnDrawGizmos()
+{
+    // Draw the "Future" path in the buffer (Yellow)
+    if (_actionBuffer != null && _actionBuffer.Count > 0)
+    {
+        Gizmos.color = Color.yellow;
+        Vector3 lastPoint = (_targetAction != null) ? _targetAction.Position : transform.position;
+        
+        foreach (var action in _actionBuffer)
+        {
+            Gizmos.DrawLine(lastPoint, action.Position);
+            Gizmos.DrawSphere(action.Position, 0.1f);
+            lastPoint = action.Position;
+        }
+    }
+
+    // Draw the "Current" active segment (Green)
+    if (_previousAction != null && _targetAction != null)
+    {
+        Gizmos.color = Color.green;
+        Gizmos.DrawLine(_previousAction.Position, _targetAction.Position);
+        Gizmos.DrawCube(_targetAction.Position, Vector3.one * 0.2f);
+    }
+}
+   
 }

@@ -8,7 +8,7 @@ public class WorldSyncManager : MonoBehaviour {
     [Header("Settings")]
     public string apiUrl = "https://fortinero-vercel.vercel.app/api/session";
     public GameObject playerPrefab;
-    public const float SYNC_INTERVAL = 1.0f;
+    public const float SYNC_INTERVAL = 5.0f;
 
     private string localPlayerId;
     private Dictionary<string, GameObject> ghostPlayers = new Dictionary<string, GameObject>();
@@ -62,7 +62,5 @@ public class WorldSyncManager : MonoBehaviour {
             
         }
     }
-
-
 }
 

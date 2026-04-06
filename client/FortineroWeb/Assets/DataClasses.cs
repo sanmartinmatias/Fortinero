@@ -54,7 +54,7 @@ public class SessionResponse {
 [Serializable]
 public class PlayerAction {
     public string type;
-    public float timestamp;
+    public ushort timestamp;
     public ushort ry; 
     public ushort s;  
     public ushort x;
@@ -66,7 +66,7 @@ public class PlayerAction {
     public PlayerAction(Vector3 position, float rotation, float timestamp, string type)
     {
         this.type = type;
-        this.timestamp = timestamp;
+        this.timestamp = Mathf.FloatToHalf(timestamp);
         this.ry = Mathf.FloatToHalf(rotation);
         this.x = Mathf.FloatToHalf(position.x);
         this.y = Mathf.FloatToHalf(position.y);
@@ -75,7 +75,7 @@ public class PlayerAction {
 
     public float RotationY => Mathf.HalfToFloat(ry);
     public Vector3 Position => new (Mathf.HalfToFloat(x), Mathf.HalfToFloat( y),Mathf.HalfToFloat(z));
-
+    public float Timestamp => Mathf.HalfToFloat(timestamp);
 }
 
 // Inside PlayerData
