@@ -262,6 +262,7 @@ namespace StarterAssets
 
                 // rotate to face input direction relative to camera position
                 transform.rotation = Quaternion.Euler(0.0f, rotation, 0.0f);
+                EventBus.Publish(PlayerData.ROTATION_EVENT);
             }
 
 
@@ -289,6 +290,8 @@ namespace StarterAssets
                 // update animator if using character
                 if (_hasAnimator)
                 {
+                    EventBus.Publish(PlayerData.GROUNDED_EVENT);
+
                     _animator.SetBool(_animIDJump, false);
                     _animator.SetBool(_animIDFreeFall, false);
                 }
@@ -304,7 +307,7 @@ namespace StarterAssets
                 {
                     // the square root of H * -2 * G = how much velocity needed to reach desired height
                     _verticalVelocity = Mathf.Sqrt(JumpHeight * -2f * Gravity);
-
+                    EventBus.Publish(PlayerData.JUMP_EVENT);
                     // update animator if using character
                     if (_hasAnimator)
                     {
@@ -330,6 +333,7 @@ namespace StarterAssets
                 }
                 else
                 {
+                     EventBus.Publish(PlayerData.FALL_EVENT);
                     // update animator if using character
                     if (_hasAnimator)
                     {

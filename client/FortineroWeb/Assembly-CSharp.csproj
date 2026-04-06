@@ -64,14 +64,17 @@
     <Analyzer Include="/Applications/Unity/Hub/Editor/2022.3.21f1/Unity.app/Contents/Tools/Unity.SourceGenerators/Unity.Properties.SourceGenerator.dll" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Assets/Singleton.cs" />
     <Compile Include="Assets/StarterAssets/TutorialInfo/Scripts/Readme.cs" />
     <Compile Include="Assets/StarterAssets/Mobile/Scripts/VirtualInputs/UIVirtualTouchZone.cs" />
     <Compile Include="Assets/StarterAssets/Mobile/Scripts/VirtualInputs/UIVirtualButton.cs" />
     <Compile Include="Assets/StarterAssets/Mobile/Scripts/VirtualInputs/UIVirtualJoystick.cs" />
     <Compile Include="Assets/WorldSyncManager.cs" />
+    <Compile Include="Assets/EventBus.cs" />
     <Compile Include="Assets/StarterAssets/Mobile/Scripts/CanvasInputs/UICanvasControllerInput.cs" />
     <Compile Include="Assets/DataClasses.cs" />
     <Compile Include="Assets/StarterAssets/Mobile/Scripts/Utilities/MobileDisableAutoSwitchControls.cs" />
+    <Compile Include="Assets/TaskRunner.cs" />
     <Compile Include="Assets/StarterAssets/ThirdPersonController/Scripts/BasicRigidBodyPush.cs" />
     <Compile Include="Assets/GhostController.cs" />
     <Compile Include="Assets/StarterAssets/InputSystem/StarterAssetsInputs.cs" />

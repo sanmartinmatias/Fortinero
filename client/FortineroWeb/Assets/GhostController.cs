@@ -1,20 +1,27 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
+using System;
 
 public class GhostController : MonoBehaviour
 {
     private Animator _animator;
     private int _animIDSpeed, _animIDGrounded, _animIDJump, _animIDFreeFall, _animIDMotionSpeed;
 
-    [Header("Sync Settings")]
-    public float TeleportThreshold = 10f; // Distance before we snap instantly
-    public float SyncWindow => WorldSyncManager.SYNC_INTERVAL;       // Matches your API poll rate (2s)
-    
-    private Vector3 _startPos;
-    private Vector3 _targetPos;
+    public float SyncWindow => WorldSyncManager.SYNC_INTERVAL; 
+
     private float _lerpTime;
-    private float _animationBlend;
-    private Queue<PlayerAction> _actionQueue = new Queue<PlayerAction>();
+    private bool _hasStarted = false;
+
+    [Header("Local Physics")]
+    public float Gravity = -15.0f;
+    private float _verticalVelocity;
+    private Vector3 _currentPhysicsPos;
+
+    [Header("Pacing Settings")]
+    public float SpeedDamping = 5f;
+    public float StopThreshold = 0.05f;
+    private float _currentAnimSpeed;
 
     void Awake()
     {
@@ -25,92 +32,111 @@ public class GhostController : MonoBehaviour
         _animIDFreeFall = Animator.StringToHash("FreeFall");
         _animIDMotionSpeed = Animator.StringToHash("MotionSpeed");
         
-        _targetPos = transform.position;
     }
-
+    private List<Vector3> _pathPoints = new List<Vector3>();
+    private PlayerData _oldData = new PlayerData();
     public void UpdateFromNetwork(PlayerData data)
     {
-        _startPos = transform.position;
-        _targetPos = new Vector3(data.x, data.y, data.z);
-        
-        // 1. Teleport Check: If they moved too far, don't walk, just snap.
-        if (Vector3.Distance(_startPos, _targetPos) > TeleportThreshold)
-        {
-            transform.position = _targetPos;
-            _startPos = _targetPos;
-        }
+        if (data.recentActions == null || data.recentActions.Count == 0 || data.Equals(_oldData)) return;
+        _oldData = data;
 
-        // 2. Reset the Lerp clock
-        // This ensures the ghost reaches _targetPos in exactly SyncWindow seconds
-        _lerpTime = 0f;
+        TaskRunner.Instance.Cancel(data.playerId);
+        float packetStartTime = data.recentActions[0].timestamp;
 
-        // 3. Queue new actions
-        if (data.recentActions != null)
+        for (int i = 0; i < data.recentActions.Count; i++)
         {
-            foreach (var action in data.recentActions) _actionQueue.Enqueue(action);
+            PlayerAction action = data.recentActions[i];
+            PlayerAction prevAction = data.recentActions[Mathf.Max(0, i - 1)];
+
+            float relativeDelay = action.timestamp - packetStartTime;
+            float prevDelay = prevAction.timestamp - packetStartTime;
+            float safeDelay = Mathf.Max(0, relativeDelay);
+
+            //Move and rotation, avery action counts.
+            TaskRunner.Instance.Delay(prevDelay, () =>
+            {   
+                TaskRunner.Instance.Cancel($"Move:{data.playerId}");
+                TaskRunner.Instance.Move(transform,action.Position,Quaternion.Euler(0,-action.RotationY,0), relativeDelay-prevDelay, $"Move:{data.playerId}");
+                
+            },data.playerId);
+
+            TaskRunner.Instance.Delay(relativeDelay, () =>
+            {
+                UpdateMoveAnimation(action);
+                switch (action.type)
+                {   
+                    case PlayerData.JUMP_EVENT: JumpEvent(); break;
+                    case PlayerData.FALL_EVENT: FallEvent(); break;
+                    case PlayerData.GROUNDED_EVENT: GroundedEvent(); break;
+                }
+            }, data.playerId);
         }
     }
 
-    void Update()
+    private Vector3 _lastActionPos;
+    private float _lastActionTime;
+
+   private float _currentAnimBlend; // Persistent variable to store the lerped value
+    private const float SpeedChangeRate = 10.0f; // Matches the Move() logic rate
+
+private void UpdateMoveAnimation(PlayerAction action)
+{
+    float timeDelta = action.timestamp - _lastActionTime;
+    if (timeDelta <= 0) return;
+
+    float distance = Vector3.Distance(_lastActionPos, action.Position);
+    float physicalSpeed = distance / timeDelta;
+
+    _currentAnimBlend = Mathf.Lerp(_currentAnimBlend, physicalSpeed, timeDelta * SpeedChangeRate);
+
+    if (_currentAnimBlend < 0.01f) _currentAnimBlend = 0f;
+    float inferredInputMagnitude = physicalSpeed > 0.1f ? 1f : 0f;
+    _lastActionPos = action.Position;
+    _lastActionTime = action.timestamp;
+}
+
+    private void GroundedEvent()
     {
-        _lerpTime += Time.deltaTime;
-        float t = _lerpTime / SyncWindow; // Normalized time (0 to 1)
-
-        // 1. Precise Position Sync
-        // t = 1.0 means we are exactly at the target at the 2-second mark
-        if (t <= 1.0f)
-        {
-            transform.position = Vector3.Lerp(_startPos, _targetPos, t);
-        }
-        else
-        {
-            // If we go past 1.0, we are waiting for the next pulse. 
-            // Stay at target to avoid drifting.
-            transform.position = _targetPos;
-        }
-
-        // 2. Rotation & Animations
-        Vector3 direction = (_targetPos - transform.position).normalized;
-        if (direction != Vector3.zero)
-        {
-            Quaternion targetRot = Quaternion.LookRotation(new Vector3(direction.x,0, direction.z));
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, Time.deltaTime * 15f);
-        }
+        _animator.SetBool(_animIDGrounded,true);
+        _animator.SetBool(_animIDJump, false);
+        _animator.SetBool(_animIDFreeFall, false);
+    }
 
 
-        float distanceRemaining = Vector3.Distance(transform.position, _targetPos);
-        if (distanceRemaining > 0.1f)
-        {
-           
-            
-            _animationBlend = Mathf.Lerp(_animationBlend, 5.335f, Time.deltaTime * 10f);
-        }
-        else
-        {
-            _animationBlend = Mathf.Lerp(_animationBlend, 0f, Time.deltaTime * 10f);
-        }
+    private void JumpEvent()
+    {
+        _animator.SetBool(_animIDGrounded,false);
+        _animator.SetBool(_animIDJump,true);
+    }
 
-        // 3. Action Replay (Triggering based on position/progress)
-        if (_actionQueue.Count > 0)
+    private void FallEvent()
+    {
+        _animator.SetBool(_animIDGrounded,false);
+        _animator.SetBool(_animIDFreeFall,true);
+    }
+
+
+    public AudioClip LandingAudioClip;
+        public AudioClip[] FootstepAudioClips;
+        [Range(0, 1)] public float FootstepAudioVolume = 0.5f;
+
+    private void OnFootstep(AnimationEvent animationEvent)
+    {
+        if (animationEvent.animatorClipInfo.weight > 0.5f)
         {
-            // We check if we've passed the timestamp or reached the spatial trigger
-            var action = _actionQueue.Peek();
-            if (t >= 0.5f || _actionQueue.Count > 3) // Example logic: trigger halfway through pulse
+            if (FootstepAudioClips.Length > 0)
             {
-                HandleAction(_actionQueue.Dequeue());
+                var index = UnityEngine.Random.Range(0, FootstepAudioClips.Length);
+                AudioSource.PlayClipAtPoint(FootstepAudioClips[index], transform.TransformPoint(transform.position), FootstepAudioVolume);
             }
         }
-
-        _animator.SetFloat(_animIDSpeed, _animationBlend);
-        _animator.SetFloat(_animIDMotionSpeed, t < 1.0f ? 1f : 0f);
-        _animator.SetBool(_animIDGrounded, true);
     }
 
-    private void HandleAction(PlayerAction action)
+    private void OnLand(AnimationEvent animationEvent)
     {
-        if (action.type.ToLower() == "jump") _animator.SetBool(_animIDJump, true);
+        if (animationEvent.animatorClipInfo.weight > 0.5f)
+        {
+            AudioSource.PlayClipAtPoint(LandingAudioClip, transform.TransformPoint(transform.position), FootstepAudioVolume);
+        }
     }
-
-    public void OnFootstep(AnimationEvent animationEvent) { }
-    public void OnLand(AnimationEvent animationEvent) { }
 }
