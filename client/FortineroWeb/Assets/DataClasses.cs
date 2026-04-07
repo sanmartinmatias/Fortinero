@@ -10,6 +10,8 @@ public class PlayerData {
     public const string POSITION_EVENT  = "Position";
     public const string ROTATION_EVENT = "Rotation";
     public const string  GROUNDED_EVENT = "Grounded";
+     public const string SHOOT_EVENT = "Shoot" ;
+
     public Vector3 Position => new (x, y, z);
     public DateTime LastSeen => new DateTime(lastSeen);
 

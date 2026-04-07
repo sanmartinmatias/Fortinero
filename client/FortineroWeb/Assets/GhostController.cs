@@ -156,7 +156,7 @@ private void UpdateMoveAnimation(float speed, float t)
         {
             if (FootstepAudioClips.Length > 0)
             {
-                var index = UnityEngine.Random.Range(0, FootstepAudioClips.Length);
+                var index = Random.Range(0, FootstepAudioClips.Length);
                 AudioSource.PlayClipAtPoint(FootstepAudioClips[index], transform.TransformPoint(transform.position), FootstepAudioVolume);
             }
         }

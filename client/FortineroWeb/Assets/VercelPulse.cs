@@ -19,7 +19,7 @@ public class VercelPulse : MonoBehaviour {
         EventBus.Subscribe(PlayerData.FALL_EVENT, () => RecordAction(PlayerData.FALL_EVENT));
         EventBus.Subscribe(PlayerData.GROUNDED_EVENT, () => RecordAction(PlayerData.GROUNDED_EVENT));
         EventBus.Subscribe(PlayerData.ROTATION_EVENT, () => RecordAction(PlayerData.ROTATION_EVENT));
-
+        EventBus.Subscribe(PlayerData.SHOOT_EVENT, () => RecordAction(PlayerData.SHOOT_EVENT));
     }
 
     void OnDisable()
